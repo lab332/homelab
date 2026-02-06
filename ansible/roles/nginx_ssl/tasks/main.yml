@@ -1,0 +1,106 @@
+---
+# Nginx + Certbot with Cloudflare DNS challenge
+
+- name: Install Nginx and Certbot
+  ansible.builtin.apt:
+    name:
+      - nginx
+      - certbot
+      - python3-certbot-dns-cloudflare
+    state: present
+    update_cache: true
+  become: true
+
+- name: Create Certbot config directory
+  ansible.builtin.file:
+    path: /etc/letsencrypt
+    state: directory
+    mode: "0700"
+  become: true
+
+- name: Deploy Cloudflare credentials
+  ansible.builtin.template:
+    src: cloudflare.ini.j2
+    dest: /etc/letsencrypt/cloudflare.ini
+    owner: root
+    group: root
+    mode: "0600"
+  become: true
+
+- name: Check if certificate exists
+  ansible.builtin.stat:
+    path: "/etc/letsencrypt/live/{{ nginx_ssl_domain }}/fullchain.pem"
+  register: cert_exists
+
+- name: Obtain SSL certificate via Cloudflare DNS challenge
+  ansible.builtin.command: >
+    certbot certonly
+    --dns-cloudflare
+    --dns-cloudflare-credentials /etc/letsencrypt/cloudflare.ini
+    --dns-cloudflare-propagation-seconds 60
+    -d {{ nginx_ssl_domain }}
+    --agree-tos
+    --email {{ nginx_ssl_email }}
+    --non-interactive
+  become: true
+  when: not cert_exists.stat.exists
+  register: certbot_result
+
+- name: Show certbot output
+  ansible.builtin.debug:
+    var: certbot_result.stdout_lines
+  when: certbot_result is changed
+
+- name: Deploy Nginx main configuration
+  ansible.builtin.template:
+    src: nginx.conf.j2
+    dest: /etc/nginx/nginx.conf
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  notify: Reload Nginx
+
+- name: Deploy Nginx site configuration
+  ansible.builtin.template:
+    src: nginx_site.conf.j2
+    dest: "/etc/nginx/sites-available/{{ nginx_ssl_site_name }}"
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  notify: Reload Nginx
+
+- name: Enable Nginx site
+  ansible.builtin.file:
+    src: "/etc/nginx/sites-available/{{ nginx_ssl_site_name }}"
+    dest: "/etc/nginx/sites-enabled/{{ nginx_ssl_site_name }}"
+    state: link
+  become: true
+  notify: Reload Nginx
+
+- name: Remove default Nginx site
+  ansible.builtin.file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+  become: true
+  notify: Reload Nginx
+
+- name: Ensure Nginx is running
+  ansible.builtin.systemd:
+    name: nginx
+    enabled: true
+    state: started
+  become: true
+
+- name: Setup Certbot auto-renewal cron (monthly)
+  ansible.builtin.cron:
+    name: "Certbot renewal"
+    minute: "30"
+    hour: "3"
+    day: "1"
+    month: "*"
+    job: "certbot renew --quiet --dns-cloudflare --dns-cloudflare-credentials /etc/letsencrypt/cloudflare.ini --post-hook 'systemctl reload nginx' >> /var/log/certbot-renew.log 2>&1"
+    user: root
+  become: true
+

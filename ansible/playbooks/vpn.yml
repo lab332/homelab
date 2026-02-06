@@ -1,0 +1,60 @@
+---
+# Playbook for deploying WireGuard VPN
+# This configures internal and external VPN nodes
+#
+# Usage:
+#   ansible-playbook -i inventory/hosts.yml playbooks/vpn.yml
+#
+# The playbook runs in two phases:
+# 1. First pass: Generate keys on all hosts
+# 2. Second pass: Deploy configs with peer information
+
+- name: WireGuard VPN - Generate keys
+  hosts: vpn
+  gather_facts: true
+  become: true
+  tasks:
+    - name: Install WireGuard packages
+      ansible.builtin.apt:
+        name: "{{ wg_packages }}"
+        state: present
+        update_cache: true
+
+    - name: Create WireGuard keys directory
+      ansible.builtin.file:
+        path: "{{ wg_keys_dir }}"
+        state: directory
+        mode: "0700"
+        owner: root
+        group: root
+
+    - name: Generate WireGuard private key
+      ansible.builtin.shell: |
+        if [ ! -f {{ wg_keys_dir }}/privatekey ]; then
+          wg genkey > {{ wg_keys_dir }}/privatekey
+          chmod 600 {{ wg_keys_dir }}/privatekey
+        fi
+      args:
+        creates: "{{ wg_keys_dir }}/privatekey"
+
+    - name: Generate WireGuard public key
+      ansible.builtin.shell: |
+        cat {{ wg_keys_dir }}/privatekey | wg pubkey > {{ wg_keys_dir }}/publickey
+        chmod 644 {{ wg_keys_dir }}/publickey
+      args:
+        creates: "{{ wg_keys_dir }}/publickey"
+
+    - name: Read public key
+      ansible.builtin.slurp:
+        src: "{{ wg_keys_dir }}/publickey"
+      register: wg_public_key_file
+
+    - name: Set public key fact
+      ansible.builtin.set_fact:
+        wg_public_key: "{{ wg_public_key_file.content | b64decode | trim }}"
+
+- name: WireGuard VPN - Deploy configuration
+  hosts: vpn
+  gather_facts: true
+  roles:
+    - wireguard

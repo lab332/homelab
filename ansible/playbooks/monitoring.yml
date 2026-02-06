@@ -1,0 +1,218 @@
+---
+# Monitoring stack deployment
+# Installs: Node Exporter, WireGuard Exporter, Prometheus, Alertmanager
+#
+# Usage:
+#   ansible-galaxy collection install -r requirements.yml
+#   ansible-playbook playbooks/monitoring.yml
+#
+# Run specific components:
+#   ansible-playbook playbooks/monitoring.yml --tags node_exporter
+#   ansible-playbook playbooks/monitoring.yml --tags wireguard_exporter
+#   ansible-playbook playbooks/monitoring.yml --tags prometheus
+#   ansible-playbook playbooks/monitoring.yml --tags alertmanager
+
+- name: Install Node Exporter on all VPN hosts
+  hosts: vpn
+  become: true
+  tags:
+    - node_exporter
+    - exporters
+  roles:
+    - role: prometheus.prometheus.node_exporter
+      vars:
+        node_exporter_web_listen_address: "0.0.0.0:9100"
+
+- name: Install WireGuard Exporter on all VPN hosts
+  hosts: vpn
+  become: true
+  tags:
+    - wireguard_exporter
+    - exporters
+  roles:
+    - role: wireguard_exporter
+
+- name: Install Prometheus and Alertmanager on monitoring host
+  hosts: vpn-internal
+  become: true
+  tags:
+    - prometheus
+    - alertmanager
+  vars:
+    # Prometheus settings
+    prometheus_web_listen_address: "0.0.0.0:9090"
+    prometheus_storage_retention: "30d"
+    prometheus_storage_retention_size: "10GB"
+
+    # Scrape configs - all VPN hosts
+    prometheus_scrape_configs:
+      - job_name: "prometheus"
+        static_configs:
+          - targets:
+              - "localhost:9090"
+
+      - job_name: "node_exporter"
+        static_configs:
+          - targets:
+              - "{{ hostvars['vpn-internal'].ansible_host }}:9100"
+              - "{{ hostvars['vpn-external'].ansible_host }}:9100"
+            labels:
+              group: "vpn"
+
+      - job_name: "wireguard"
+        static_configs:
+          - targets:
+              - "{{ hostvars['vpn-internal'].ansible_host }}:9586"
+              - "{{ hostvars['vpn-external'].ansible_host }}:9586"
+            labels:
+              group: "vpn"
+
+    # Alertmanager settings - send directly to Telegram
+    alertmanager_web_listen_address: "0.0.0.0:9093"
+    alertmanager_cluster_listen_address: ""
+
+    alertmanager_receivers:
+      - name: "telegram"
+        telegram_configs:
+          - bot_token: "{{ wg_manager_telegram_bot_token }}"
+            chat_id: "{{ wg_manager_telegram_chat_id }}"
+            api_url: "https://api.telegram.org"
+            parse_mode: "HTML"
+            message: !unsafe |
+              {{ if eq .Status "firing" }}🔥{{ else }}✅{{ end }} <b>{{ .Status | toUpper }}</b>
+              {{ range .Alerts }}
+              <b>{{ .Labels.alertname }}</b>
+              {{ if .Labels.instance }}📍 {{ .Labels.instance }}{{ end }}
+              {{ if .Labels.severity }}⚠️ {{ .Labels.severity }}{{ end }}
+              {{ if .Annotations.summary }}📝 {{ .Annotations.summary }}{{ end }}
+              {{ end }}
+
+      - name: "null"
+
+    alertmanager_route:
+      receiver: "telegram"
+      group_by:
+        - alertname
+        - instance
+      group_wait: "30s"
+      group_interval: "5m"
+      repeat_interval: "4h"
+      routes:
+        - receiver: "null"
+          matchers:
+            - alertname = "Watchdog"
+
+    # Alert rules - use !unsafe to prevent Jinja2 interpretation
+    prometheus_alert_rules:
+      - alert: InstanceDown
+        expr: up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: !unsafe "Instance {{ $labels.instance }} is down"
+          description: !unsafe "{{ $labels.job }} target {{ $labels.instance }} has been down for more than 2 minutes"
+
+      - alert: HighCpuUsage
+        expr: 100 - (avg by(instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: !unsafe "High CPU usage on {{ $labels.instance }}"
+          description: !unsafe "CPU usage is above 80% for more than 5 minutes (current: {{ $value | printf \"%.1f\" }}%)"
+
+      - alert: HighMemoryUsage
+        expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: !unsafe "High memory usage on {{ $labels.instance }}"
+          description: !unsafe "Memory usage is above 85% for more than 5 minutes (current: {{ $value | printf \"%.1f\" }}%)"
+
+      - alert: DiskSpaceLow
+        expr: (node_filesystem_avail_bytes{fstype!~"tmpfs|overlay"} / node_filesystem_size_bytes{fstype!~"tmpfs|overlay"}) * 100 < 15
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: !unsafe "Low disk space on {{ $labels.instance }}"
+          description: !unsafe "Disk space on {{ $labels.mountpoint }} is below 15% (current: {{ $value | printf \"%.1f\" }}%)"
+
+      - alert: DiskSpaceCritical
+        expr: (node_filesystem_avail_bytes{fstype!~"tmpfs|overlay"} / node_filesystem_size_bytes{fstype!~"tmpfs|overlay"}) * 100 < 5
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: !unsafe "Critical disk space on {{ $labels.instance }}"
+          description: !unsafe "Disk space on {{ $labels.mountpoint }} is below 5% (current: {{ $value | printf \"%.1f\" }}%)"
+
+      - alert: HighNetworkTraffic
+        expr: rate(node_network_receive_bytes_total{device!~"lo|docker.*|br-.*|veth.*"}[5m]) * 8 > 800000000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: !unsafe "High network traffic on {{ $labels.instance }}"
+          description: !unsafe "Network receive traffic on {{ $labels.device }} is above 800 Mbps"
+
+      - alert: WireGuardPeerDown
+        expr: wireguard_latest_handshake_seconds > 180
+        for: 3m
+        labels:
+          severity: warning
+        annotations:
+          summary: !unsafe "WireGuard peer inactive on {{ $labels.instance }}"
+          description: !unsafe "WireGuard peer {{ $labels.public_key }} has not had a handshake for over 3 minutes"
+
+      - alert: WireGuardInterfaceDown
+        expr: absent(wireguard_interface_info) == 1
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "WireGuard interface down"
+          description: "No WireGuard interface metrics available - interface may be down"
+
+      - alert: HighSystemLoad
+        expr: node_load5 / on(instance) count by(instance) (node_cpu_seconds_total{mode="idle"}) > 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: !unsafe "High system load on {{ $labels.instance }}"
+          description: !unsafe "System load is very high relative to CPU count (load5: {{ $value | printf \"%.2f\" }})"
+
+      - alert: NodeRestarted
+        expr: (time() - node_boot_time_seconds) < 300
+        for: 0m
+        labels:
+          severity: info
+        annotations:
+          summary: !unsafe "Node {{ $labels.instance }} was restarted"
+          description: "Node was restarted within the last 5 minutes"
+
+      - alert: ServiceDown
+        expr: node_systemd_unit_state{name=~"wg-quick@.*|wg-manager.*", state="active"} != 1
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: !unsafe "Service {{ $labels.name }} is down on {{ $labels.instance }}"
+          description: !unsafe "Systemd service {{ $labels.name }} is not in active state"
+
+  roles:
+    - role: prometheus.prometheus.prometheus
+    - role: prometheus.prometheus.alertmanager
+
+- name: Setup Nginx with SSL for Telegram Webhook
+  hosts: vpn-internal
+  become: true
+  tags:
+    - nginx_ssl
+    - webhook
+  roles:
+    - role: nginx_ssl
+

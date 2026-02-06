@@ -1,0 +1,31 @@
+---
+# WireGuard common settings for VPN group
+wg_interface_name: "wg0"
+wg_network: "10.20.30.0/24"
+wg_persistent_keepalive: 25
+
+# Packages to install
+wg_packages:
+  - wireguard
+  - wireguard-tools
+  - iptables
+  - ipcalc
+  - qrencode
+  - curl
+  - jq
+  - traceroute
+  - dnsutils
+  - ufw
+
+# Sysctl settings for forwarding
+wg_sysctl_settings:
+  - name: net.ipv4.ip_forward
+    value: "1"
+  - name: net.ipv4.conf.all.forwarding
+    value: "1"
+
+# Keys directory
+wg_keys_dir: "/etc/wireguard/keys"
+
+# Default listen port
+wg_default_listen_port: 51820

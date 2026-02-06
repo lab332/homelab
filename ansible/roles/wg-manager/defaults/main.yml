@@ -1,0 +1,40 @@
+---
+# WG Manager defaults
+
+wg_manager_install_dir: /opt/wg-manager
+wg_manager_config_dir: /etc/wg-manager
+wg_manager_user: root
+wg_manager_group: root
+
+# API settings
+wg_manager_api_host: "0.0.0.0"
+wg_manager_api_port: 8080
+wg_manager_api_secret: ""
+
+# Telegram settings (required)
+wg_manager_telegram_bot_token: ""
+wg_manager_telegram_chat_id: 0  # Chat/Group ID (negative number for groups)
+
+# Telegram webhook settings (recommended for production)
+# Set webhook_url to enable webhook mode instead of polling
+wg_manager_telegram_webhook_url: ""  # e.g., https://bot.lab332.ru
+wg_manager_telegram_webhook_path: "/telegram_webhook"  # Path for webhook endpoint
+
+# WireGuard settings
+wg_manager_wg_interface: "wg0"
+wg_manager_wg_config_path: "/etc/wireguard"
+wg_manager_wg_keys_path: "/etc/wireguard/keys"
+wg_manager_wg_network_prefix: "10.20.30"
+wg_manager_wg_clients_dir: "/etc/wireguard/clients"
+wg_manager_wg_endpoint: ""  # Public IP/hostname for client configs
+wg_manager_wg_endpoint_port: 17968
+
+# External node settings
+wg_manager_external_host: ""
+wg_manager_external_user: "root"
+wg_manager_external_ssh_key: "/root/.ssh/id_ed25519"
+wg_manager_external_ssh_port: 22
+
+# Python
+wg_manager_python_version: python3
+wg_manager_venv_path: /opt/wg-manager/venv

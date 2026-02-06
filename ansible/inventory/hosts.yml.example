@@ -1,0 +1,62 @@
+---
+# Пример конфигурации инвентаря
+# Скопируй в hosts.yml и заполни свои данные:
+#   cp hosts.yml.example hosts.yml
+
+all:
+  children:
+    vpn:
+      hosts:
+        vpn-internal:
+          ansible_host: 10.0.0.1              # IP внутреннего сервера
+          wg_role: internal
+          wg_address: "10.20.30.1/32"
+          wg_listen_port: 17968
+          wg_endpoint: "10.0.0.1"             # Публичный IP для подключения
+          wg_endpoint_port: 17968
+          # WG Manager (Telegram бот)
+          wg_manager_enabled: true
+          wg_manager_external_host: "10.0.0.2"
+          wg_manager_external_ssh_key: "/root/.ssh/id_ed25519"
+          wg_manager_wg_endpoint: "10.0.0.1"
+          wg_manager_wg_endpoint_port: 17968
+
+        vpn-external:
+          ansible_host: 10.0.0.2              # IP внешнего сервера
+          wg_role: external
+          wg_address: "10.20.30.2/32"
+          wg_listen_port: 51820
+          wg_manager_enabled: false
+
+  vars:
+    # ============================================================
+    # ОБЯЗАТЕЛЬНЫЕ НАСТРОЙКИ
+    # ============================================================
+
+    # Telegram Bot
+    # Получить токен: @BotFather -> /newbot
+    wg_manager_telegram_bot_token: "123456789:ABCdefGHIjklMNOpqrsTUVwxyz"
+
+    # Chat ID для алертов и бота
+    # Получить: добавь бота в группу, отправь сообщение,
+    # открой https://api.telegram.org/bot<TOKEN>/getUpdates
+    wg_manager_telegram_chat_id: -1001234567890  # Для групп отрицательный!
+
+    # ============================================================
+    # ОПЦИОНАЛЬНЫЕ НАСТРОЙКИ (SSL/Webhook)
+    # ============================================================
+
+    # Мониторинг (включить/выключить)
+    monitoring_enabled: true
+
+    # Cloudflare API Token (для автоматического SSL)
+    # Получить: https://dash.cloudflare.com/profile/api-tokens
+    # Шаблон: "Edit zone DNS"
+    # nginx_ssl_cloudflare_token: "your-cloudflare-api-token"
+    # nginx_ssl_domain: "yourdomain.com"
+    # nginx_ssl_email: "admin@yourdomain.com"
+
+    # Webhook для бота (рекомендуется для production)
+    # Требует SSL сертификат (nginx_ssl_*)
+    # wg_manager_telegram_webhook_url: "https://yourdomain.com"
+    # wg_manager_telegram_webhook_path: "/telegram_webhook"

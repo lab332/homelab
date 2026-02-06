@@ -1,0 +1,114 @@
+---
+- name: Update apt cache and upgrade packages
+  ansible.builtin.apt:
+    update_cache: true
+    upgrade: dist
+    cache_valid_time: 3600
+  become: true
+
+- name: Install WireGuard packages
+  ansible.builtin.apt:
+    name: "{{ wg_packages }}"
+    state: present
+  become: true
+
+- name: Configure sysctl for IP forwarding
+  ansible.builtin.sysctl:
+    name: "{{ item.name }}"
+    value: "{{ item.value }}"
+    sysctl_set: true
+    state: present
+    reload: true
+  loop: "{{ wg_sysctl_settings }}"
+  become: true
+
+- name: Set hostname based on inventory name
+  ansible.builtin.hostname:
+    name: "{{ inventory_hostname | replace('_', '-') }}"
+  become: true
+
+- name: Create WireGuard keys directory
+  ansible.builtin.file:
+    path: "{{ wg_keys_dir }}"
+    state: directory
+    mode: "0700"
+    owner: root
+    group: root
+  become: true
+
+- name: Generate WireGuard private key
+  ansible.builtin.shell: |
+    if [ ! -f {{ wg_keys_dir }}/privatekey ]; then
+      wg genkey > {{ wg_keys_dir }}/privatekey
+      chmod 600 {{ wg_keys_dir }}/privatekey
+    fi
+    cat {{ wg_keys_dir }}/privatekey
+  args:
+    creates: "{{ wg_keys_dir }}/privatekey"
+  register: wg_private_key_gen
+  changed_when: false
+  become: true
+
+- name: Read private key
+  ansible.builtin.slurp:
+    src: "{{ wg_keys_dir }}/privatekey"
+  register: wg_private_key_file
+  become: true
+
+- name: Set private key fact
+  ansible.builtin.set_fact:
+    wg_private_key: "{{ wg_private_key_file.content | b64decode | trim }}"
+
+- name: Generate WireGuard public key
+  ansible.builtin.shell: |
+    cat {{ wg_keys_dir }}/privatekey | wg pubkey > {{ wg_keys_dir }}/publickey
+    chmod 644 {{ wg_keys_dir }}/publickey
+    cat {{ wg_keys_dir }}/publickey
+  args:
+    creates: "{{ wg_keys_dir }}/publickey"
+  register: wg_public_key_gen
+  changed_when: false
+  become: true
+
+- name: Read public key
+  ansible.builtin.slurp:
+    src: "{{ wg_keys_dir }}/publickey"
+  register: wg_public_key_file
+  become: true
+
+- name: Set public key fact
+  ansible.builtin.set_fact:
+    wg_public_key: "{{ wg_public_key_file.content | b64decode | trim }}"
+
+- name: Debug - Show public keys
+  ansible.builtin.debug:
+    msg: "Host {{ inventory_hostname }} public key: {{ wg_public_key }}"
+
+# Collect all public keys from the vpn group
+- name: Collect public keys from all VPN hosts
+  ansible.builtin.set_fact:
+    vpn_peers: "{{ vpn_peers | default({}) | combine({item: hostvars[item].wg_public_key}) }}"
+  loop: "{{ groups['vpn'] }}"
+  when: hostvars[item].wg_public_key is defined
+
+- name: Debug - Show all peers
+  ansible.builtin.debug:
+    var: vpn_peers
+
+- name: Deploy WireGuard configuration
+  ansible.builtin.template:
+    src: wg.conf.j2
+    dest: "{{ wg_config_dir }}/{{ wg_interface_name }}.conf"
+    owner: root
+    group: root
+    mode: "0600"
+  become: true
+  notify:
+    - Restart WireGuard
+
+- name: Enable and start WireGuard service
+  ansible.builtin.systemd:
+    name: "wg-quick@{{ wg_interface_name }}"
+    enabled: "{{ wg_service_enabled }}"
+    state: "{{ wg_service_state }}"
+  become: true

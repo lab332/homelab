@@ -1,0 +1,19 @@
+---
+# Playbook for deploying WireGuard Manager service
+# This should be run AFTER the vpn.yml playbook
+#
+# Usage:
+#   ansible-playbook playbooks/wg-manager.yml
+#
+# Before running, configure in inventory/hosts.yml:
+#   - wg_manager_telegram_bot_token
+#   - wg_manager_telegram_allowed_users
+
+- name: Deploy WireGuard Manager
+  hosts: vpn
+  gather_facts: true
+  tasks:
+    - name: Include wg-manager role on internal node
+      ansible.builtin.include_role:
+        name: wg-manager
+      when: wg_manager_enabled | default(false)

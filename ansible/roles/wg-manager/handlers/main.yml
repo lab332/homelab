@@ -1,0 +1,11 @@
+---
+- name: Reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true
+  become: true
+
+- name: Restart wg-manager
+  ansible.builtin.systemd:
+    name: wg-manager
+    state: restarted
+  become: true

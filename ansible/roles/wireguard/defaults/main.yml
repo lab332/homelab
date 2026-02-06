@@ -1,0 +1,45 @@
+---
+# Default values for wireguard role
+# These can be overridden in inventory
+
+# Interface name
+wg_interface_name: "wg0"
+
+# WireGuard network
+wg_network: "10.20.30.0/24"
+
+# Default listen port
+wg_default_listen_port: 51820
+
+# Persistent keepalive interval (seconds)
+wg_persistent_keepalive: 25
+
+# Keys directory on remote host
+wg_keys_dir: "/etc/wireguard/keys"
+
+# Config directory
+wg_config_dir: "/etc/wireguard"
+
+# Packages to install
+wg_packages:
+  - wireguard
+  - wireguard-tools
+  - iptables
+  - ipcalc
+  - qrencode
+  - curl
+  - jq
+  - traceroute
+  - dnsutils
+  - ufw
+
+# Sysctl settings
+wg_sysctl_settings:
+  - name: net.ipv4.ip_forward
+    value: "1"
+  - name: net.ipv4.conf.all.forwarding
+    value: "1"
+
+# Enable and start WireGuard service
+wg_service_enabled: true
+wg_service_state: started

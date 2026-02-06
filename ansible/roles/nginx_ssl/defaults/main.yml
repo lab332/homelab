@@ -1,0 +1,14 @@
+---
+# Nginx SSL defaults
+nginx_ssl_domain: "lab332.ru"
+nginx_ssl_site_name: "ssl_site"
+nginx_ssl_email: "admin@lab332.ru"
+
+# Cloudflare API token (from inventory)
+nginx_ssl_cloudflare_token: ""
+
+# Backend proxies (list of locations)
+nginx_ssl_locations:
+  - path: "/telegram-webhook"
+    backend: "http://localhost:8080"
+    description: "Telegram bot webhook"

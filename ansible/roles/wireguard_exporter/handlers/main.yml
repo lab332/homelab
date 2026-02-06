@@ -1,0 +1,7 @@
+---
+- name: Restart wireguard-exporter
+  community.docker.docker_container:
+    name: "{{ wireguard_exporter_container_name }}"
+    state: started
+    restart: true
+  become: true

@@ -1,0 +1,16 @@
+---
+galaxy_info:
+  author: homelab
+  description: WireGuard Prometheus Exporter (Docker-based)
+  license: MIT
+  min_ansible_version: "2.9"
+  platforms:
+    - name: Ubuntu
+      versions:
+        - focal
+        - jammy
+
+dependencies:
+  - role: geerlingguy.docker
+    vars:
+      docker_install_compose_plugin: true

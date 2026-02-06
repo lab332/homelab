@@ -1,0 +1,36 @@
+---
+# WireGuard Exporter - Docker container
+# Docker is installed via geerlingguy.docker dependency
+
+- name: Pull WireGuard exporter image
+  community.docker.docker_image:
+    name: "{{ wireguard_exporter_image }}"
+    source: pull
+    force_source: "{{ wireguard_exporter_force_pull | default(false) }}"
+  become: true
+
+- name: Run WireGuard exporter container
+  community.docker.docker_container:
+    name: "{{ wireguard_exporter_container_name }}"
+    image: "{{ wireguard_exporter_image }}"
+    state: started
+    restart_policy: unless-stopped
+    network_mode: host
+    capabilities:
+      - NET_ADMIN
+    command: "-a false -v {{ wireguard_exporter_verbose | string | lower }} -p {{ wireguard_exporter_port }} -d true"
+    volumes:
+      - /etc/wireguard:/etc/wireguard:ro
+  become: true
+  register: wireguard_exporter_container
+
+- name: Wait for WireGuard exporter to be ready
+  ansible.builtin.uri:
+    url: "http://localhost:{{ wireguard_exporter_port }}/metrics"
+    method: GET
+    status_code: 200
+  register: result
+  until: result.status == 200
+  retries: 10
+  delay: 3
+  when: wireguard_exporter_container.changed

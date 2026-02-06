@@ -1,0 +1,7 @@
+---
+# WireGuard Exporter defaults
+wireguard_exporter_image: "mindflavor/prometheus-wireguard-exporter:latest"
+wireguard_exporter_container_name: "wireguard-exporter"
+wireguard_exporter_port: 9586
+wireguard_exporter_verbose: "false"
+wireguard_exporter_force_pull: false

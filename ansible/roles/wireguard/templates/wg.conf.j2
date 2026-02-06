@@ -1,0 +1,49 @@
+# {{ ansible_managed }}
+# WireGuard configuration for {{ inventory_hostname }}
+# Role: {{ wg_role }}
+
+[Interface]
+Address = {{ wg_address }}
+PrivateKey = {{ wg_private_key }}
+{% if wg_listen_port is defined %}
+ListenPort = {{ wg_listen_port }}
+{% endif %}
+
+# NAT/Masquerade for forwarding traffic
+PostUp = iptables -t nat -A POSTROUTING -o $(ip route | awk '/default/ {print $5; exit}') -j MASQUERADE
+PostDown = iptables -t nat -D POSTROUTING -o $(ip route | awk '/default/ {print $5; exit}') -j MASQUERADE
+
+{% if wg_role == 'internal' %}
+# Internal node needs additional rules to maintain external SSH access
+PostUp = ip rule add from $(ip addr show $(ip route | awk '/default/ { print $5 }') | grep "inet" | grep -v "inet6" | head -n 1 | awk '/inet/ {print $2}' | awk -F/ '{print $1}') table main
+PostDown = ip rule del from $(ip addr show $(ip route | awk '/default/ { print $5 }') | grep "inet" | grep -v "inet6" | head -n 1 | awk '/inet/ {print $2}' | awk -F/ '{print $1}') table main
+{% endif %}
+
+{% for peer_name in groups['vpn'] %}
+{% if peer_name != inventory_hostname %}
+{% set peer_vars = hostvars[peer_name] %}
+# Peer: {{ peer_name }} ({{ peer_vars.wg_role }})
+[Peer]
+PublicKey = {{ peer_vars.wg_public_key }}
+{% if wg_role == 'internal' and peer_vars.wg_role == 'external' %}
+# Internal -> External: route all traffic through external node
+AllowedIPs = {{ peer_vars.wg_address | regex_replace('/\\d+$', '/32') }}, 0.0.0.0/0
+Endpoint = {{ peer_vars.ansible_host }}:{{ peer_vars.wg_listen_port | default(wg_default_listen_port) }}
+{% elif wg_role == 'external' and peer_vars.wg_role == 'internal' %}
+# External -> Internal: allow traffic from internal network
+AllowedIPs = {{ wg_network }}
+Endpoint = {{ peer_vars.wg_endpoint }}:{{ peer_vars.wg_endpoint_port | default(wg_default_listen_port) }}
+PersistentKeepalive = {{ wg_persistent_keepalive }}
+{% else %}
+# Default peer configuration
+AllowedIPs = {{ peer_vars.wg_address | regex_replace('/\\d+$', '/32') }}
+{% if peer_vars.wg_endpoint is defined %}
+Endpoint = {{ peer_vars.wg_endpoint }}:{{ peer_vars.wg_endpoint_port | default(wg_default_listen_port) }}
+{% endif %}
+{% if wg_persistent_keepalive is defined %}
+PersistentKeepalive = {{ wg_persistent_keepalive }}
+{% endif %}
+{% endif %}
+
+{% endif %}
+{% endfor %}
