@@ -95,14 +95,56 @@
   ansible.builtin.debug:
     var: vpn_peers
 
-- name: Deploy WireGuard configuration
+- name: Deploy WireGuard base configuration
   ansible.builtin.template:
     src: wg.conf.j2
-    dest: "{{ wg_config_dir }}/{{ wg_interface_name }}.conf"
+    dest: "{{ wg_config_dir }}/.{{ wg_interface_name }}.conf.base"
     owner: root
     group: root
     mode: "0600"
   become: true
+
+- name: Assemble WireGuard config with client peers
+  ansible.builtin.shell: |
+    set -e
+    BASE="{{ wg_config_dir }}/.{{ wg_interface_name }}.conf.base"
+    FINAL="{{ wg_config_dir }}/{{ wg_interface_name }}.conf"
+    CLIENTS_DIR="{{ wg_config_dir }}/clients"
+    TMP=$(mktemp)
+
+    cat "$BASE" > "$TMP"
+
+    if [ -d "$CLIENTS_DIR" ]; then
+      for client_dir in "$CLIENTS_DIR"/*/; do
+        [ -d "$client_dir" ] || continue
+        username=$(basename "$client_dir")
+        pubkey_file="$client_dir/publickey"
+        config_file="$client_dir/$username.conf"
+        if [ -f "$pubkey_file" ] && [ -f "$config_file" ]; then
+          pubkey=$(cat "$pubkey_file")
+          client_ip=$(grep -oP 'Address = \K[0-9.]+' "$config_file" 2>/dev/null || true)
+          if [ -n "$pubkey" ] && [ -n "$client_ip" ]; then
+            printf '\n# Client: %s\n[Peer]\nPublicKey = %s\nAllowedIPs = %s/32\n' \
+              "$username" "$pubkey" "$client_ip" >> "$TMP"
+          fi
+        fi
+      done
+    fi
+
+    if [ ! -f "$FINAL" ] || ! diff -q "$TMP" "$FINAL" > /dev/null 2>&1; then
+      mv "$TMP" "$FINAL"
+      chmod 600 "$FINAL"
+      chown root:root "$FINAL"
+      echo "CONFIG_CHANGED"
+    else
+      rm -f "$TMP"
+      echo "CONFIG_UNCHANGED"
+    fi
+  args:
+    executable: /bin/bash
+  become: true
+  register: wg_config_assemble
+  changed_when: "'CONFIG_CHANGED' in wg_config_assemble.stdout"
   notify:
     - Restart WireGuard
 

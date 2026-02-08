@@ -15,9 +15,13 @@
     image: "{{ wireguard_exporter_image }}"
     state: started
     restart_policy: unless-stopped
+    recreate: "{{ wireguard_exporter_force_pull | default(false) }}"
     network_mode: host
     capabilities:
       - NET_ADMIN
+    # Docker default seccomp profile blocks netlink calls needed by 'wg show'
+    # privileged gives full access to WireGuard kernel module
+    privileged: true
     command: "-a false -v {{ wireguard_exporter_verbose | string | lower }} -p {{ wireguard_exporter_port }} -d true"
     volumes:
       - /etc/wireguard:/etc/wireguard:ro

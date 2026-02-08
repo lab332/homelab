@@ -22,6 +22,9 @@
     - role: prometheus.prometheus.node_exporter
       vars:
         node_exporter_web_listen_address: "0.0.0.0:9100"
+        node_exporter_enabled_collectors:
+          - systemd
+        node_exporter_systemd_unit_include: "wg-quick@.*|wg-manager.*|node_exporter.*|nginx.*"
 
 - name: Install WireGuard Exporter on all VPN hosts
   hosts: vpn
@@ -43,6 +46,12 @@
     prometheus_web_listen_address: "0.0.0.0:9090"
     prometheus_storage_retention: "30d"
     prometheus_storage_retention_size: "10GB"
+
+    # Connect Prometheus to Alertmanager
+    prometheus_alertmanager_config:
+      - static_configs:
+          - targets:
+              - "localhost:9093"
 
     # Scrape configs - all VPN hosts
     prometheus_scrape_configs:
@@ -76,6 +85,7 @@
         telegram_configs:
           - bot_token: "{{ wg_manager_telegram_bot_token }}"
             chat_id: "{{ wg_manager_telegram_chat_id }}"
+            message_thread_id: "{{ wg_manager_telegram_alerts_thread_id }}"
             api_url: "https://api.telegram.org"
             parse_mode: "HTML"
             message: !unsafe |
@@ -167,14 +177,14 @@
           summary: !unsafe "WireGuard peer inactive on {{ $labels.instance }}"
           description: !unsafe "WireGuard peer {{ $labels.public_key }} has not had a handshake for over 3 minutes"
 
-      - alert: WireGuardInterfaceDown
-        expr: absent(wireguard_interface_info) == 1
-        for: 1m
+      - alert: WireGuardNoMetrics
+        expr: up{job="wireguard"} == 1 unless on(instance) (count by(instance) (wireguard_sent_bytes_total) > 0)
+        for: 5m
         labels:
-          severity: critical
+          severity: warning
         annotations:
-          summary: "WireGuard interface down"
-          description: "No WireGuard interface metrics available - interface may be down"
+          summary: !unsafe "No WireGuard peer metrics on {{ $labels.instance }}"
+          description: "WireGuard exporter is running but reports no peer data - check exporter permissions"
 
       - alert: HighSystemLoad
         expr: node_load5 / on(instance) count by(instance) (node_cpu_seconds_total{mode="idle"}) > 2

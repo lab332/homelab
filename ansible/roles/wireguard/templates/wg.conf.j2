@@ -17,6 +17,19 @@ PostDown = iptables -t nat -D POSTROUTING -o $(ip route | awk '/default/ {print 
 # Internal node needs additional rules to maintain external SSH access
 PostUp = ip rule add from $(ip addr show $(ip route | awk '/default/ { print $5 }') | grep "inet" | grep -v "inet6" | head -n 1 | awk '/inet/ {print $2}' | awk -F/ '{print $1}') table main
 PostDown = ip rule del from $(ip addr show $(ip route | awk '/default/ { print $5 }') | grep "inet" | grep -v "inet6" | head -n 1 | awk '/inet/ {print $2}' | awk -F/ '{print $1}') table main
+
+# Direct routes for Telegram API and DNS — bypasses WireGuard tunnel
+# iif lo = only locally-originated traffic (not forwarded from VPN clients)
+PostUp = ip route add default via $(ip route show table main default | awk '{print $3}') dev $(ip route show table main default | awk '{print $5}') table 200 2>/dev/null || true
+PostUp = ip rule add to 149.154.160.0/20 iif lo table 200 priority 100 2>/dev/null || true
+PostUp = ip rule add to 91.108.4.0/22 iif lo table 200 priority 100 2>/dev/null || true
+PostUp = ip rule add to 8.8.8.8/32 iif lo table 200 priority 100 2>/dev/null || true
+PostUp = ip rule add to 8.8.4.4/32 iif lo table 200 priority 100 2>/dev/null || true
+PostDown = ip rule del to 149.154.160.0/20 iif lo table 200 priority 100 2>/dev/null || true
+PostDown = ip rule del to 91.108.4.0/22 iif lo table 200 priority 100 2>/dev/null || true
+PostDown = ip rule del to 8.8.8.8/32 iif lo table 200 priority 100 2>/dev/null || true
+PostDown = ip rule del to 8.8.4.4/32 iif lo table 200 priority 100 2>/dev/null || true
+PostDown = ip route flush table 200 2>/dev/null || true
 {% endif %}
 
 {% for peer_name in groups['vpn'] %}
