@@ -85,7 +85,25 @@ ID чата/группы для алертов и управления бото�
 
 > ⚠️ Для групп Chat ID отрицательный и начинается с `-100`
 
-### 3. Cloudflare API Token (опционально)
+### 3. Telegram Topics (Thread ID) — опционально
+
+Если используешь **Topics (Темы)** в группе для разделения алертов и управления ботом.
+
+**Как получить Thread ID:**
+1. Включи "Темы" в настройках группы (Settings → Topics)
+2. Создай нужные топики (например, "🔥 Alerts" и "🔐 WireGuard")
+3. Открой топик в **Telegram Web**: `https://web.telegram.org/a/#-100XXXXXXXXXX_<NUMBER>`
+4. Число после `_` в URL — это `thread_id` (например, `_97` → thread_id = `97`)
+
+**Настройка в `hosts.yml`:**
+```yaml
+wg_manager_telegram_alerts_thread_id: 97   # ID топика для алертов
+wg_manager_telegram_bot_thread_id: 99      # ID топика для бота (не используется, бот отвечает автоматически)
+```
+
+> 💡 Если не используешь Topics, оставь значения `0` — сообщения будут идти в General.
+
+### 4. Cloudflare API Token (опционально)
 
 Для автоматического выпуска SSL сертификатов через Let's Encrypt DNS challenge.
 
@@ -165,6 +183,11 @@ all:
     # Telegram Bot (см. раздел "Необходимые креды")
     wg_manager_telegram_bot_token: "YOUR_BOT_TOKEN"
     wg_manager_telegram_chat_id: YOUR_CHAT_ID  # число, для групп отрицательное
+
+    # === ОПЦИОНАЛЬНЫЕ (Telegram Topics) ===
+    # Если используешь Topics в группе, укажи thread_id для алертов
+    # wg_manager_telegram_alerts_thread_id: 97   # ID топика для алертов (0 = General)
+    # wg_manager_telegram_bot_thread_id: 99      # ID топика для бота (0 = General, бот отвечает автоматически)
 
     # === ОПЦИОНАЛЬНЫЕ (для SSL/Webhook) ===
     # Cloudflare (для автоматического SSL)
@@ -394,5 +417,7 @@ ssh root@YOUR_IP 'cat /var/log/letsencrypt/letsencrypt.log'
 |------------|----------|-------------|
 | `wg_manager_telegram_bot_token` | Токен бота | inventory/hosts.yml |
 | `wg_manager_telegram_chat_id` | ID чата | inventory/hosts.yml |
+| `wg_manager_telegram_alerts_thread_id` | ID топика для алертов (0 = General) | inventory/hosts.yml |
+| `wg_manager_telegram_bot_thread_id` | ID топика для бота (0 = General) | inventory/hosts.yml |
 | `nginx_ssl_cloudflare_token` | API токен CF | inventory/hosts.yml |
 
