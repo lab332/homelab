@@ -168,14 +168,14 @@
           summary: !unsafe "High network traffic on {{ $labels.instance }}"
           description: !unsafe "Network receive traffic on {{ $labels.device }} is above 800 Mbps"
 
-      - alert: WireGuardPeerDown
-        expr: wireguard_latest_handshake_delay_seconds > 180
+      - alert: WireGuardTunnelDown
+        expr: wireguard_latest_handshake_delay_seconds{allowed_ips=~".*0\\.0\\.0\\.0/0.*"} > 180
         for: 3m
         labels:
-          severity: warning
+          severity: critical
         annotations:
-          summary: !unsafe "WireGuard peer inactive on {{ $labels.instance }}"
-          description: !unsafe "WireGuard peer {{ $labels.public_key }} has not had a handshake for over 3 minutes (delay: {{ $value | humanizeDuration }})"
+          summary: !unsafe "WireGuard server tunnel down on {{ $labels.instance }}"
+          description: !unsafe "Server tunnel (vpn-internal ↔ vpn-external) has not had a handshake for over 3 minutes (delay: {{ $value | humanizeDuration }})"
 
       - alert: WireGuardNoMetrics
         expr: up{job="wireguard"} == 1 unless on(instance) (count by(instance) (wireguard_sent_bytes_total) > 0)
