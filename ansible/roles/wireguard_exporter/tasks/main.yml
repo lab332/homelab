@@ -22,6 +22,12 @@
     # Docker default seccomp profile blocks netlink calls needed by 'wg show'
     # privileged gives full access to WireGuard kernel module
     privileged: true
+    # Run as root to read /etc/wireguard/wg0.conf (permissions: 0600)
+    user: root
+    # Disable security restrictions to allow netlink access
+    security_opts:
+      - apparmor=unconfined
+      - seccomp=unconfined
     command: "-a false -v {{ wireguard_exporter_verbose | string | lower }} -p {{ wireguard_exporter_port }} -d true"
     volumes:
       - /etc/wireguard:/etc/wireguard:ro

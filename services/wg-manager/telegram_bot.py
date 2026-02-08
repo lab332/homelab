@@ -35,7 +35,6 @@ async def auto_delete_message(message, delay: int = AUTO_DELETE_TIMEOUT):
 
 
 def is_authorized(chat_id: int) -> bool:
-    """Check if chat is authorized to use the bot."""
     if not settings.telegram_chat_id:
         return True  # No restrictions if not configured
     return chat_id == settings.telegram_chat_id
@@ -64,6 +63,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ],
         [
             InlineKeyboardButton("📋 List Users", callback_data="list_users"),
+            InlineKeyboardButton("📱 User Info", callback_data="user_info"),
         ],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -370,10 +370,41 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 response += f"• `{user}`\n"
             await query.edit_message_text(response, parse_mode="Markdown")
         asyncio.create_task(auto_delete_message(query.message))
+    
+    elif data == "user_info":
+        users = wg_manager.list_users()
+        if not users:
+            await query.edit_message_text("📋 No users found")
+            asyncio.create_task(auto_delete_message(query.message))
+        else:
+            keyboard = []
+            for user in users:
+                keyboard.append([InlineKeyboardButton(f"👤 {user}", callback_data=f"user_info_{user}")])
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await query.edit_message_text(
+                "📱 *Select user to get QR code:*",
+                reply_markup=reply_markup,
+                parse_mode="Markdown"
+            )
+    
+    elif data.startswith("user_info_"):
+        username = data.replace("user_info_", "")
+        from pathlib import Path
+        qr_path = Path(settings.wg_clients_dir) / username / f"{username}.png"
+        
+        if not qr_path.exists():
+            await query.answer("❌ User not found", show_alert=True)
+            return
+        
+        await query.answer()
+        await query.message.reply_photo(
+            photo=open(qr_path, 'rb'),
+            caption=f"📱 QR code for `{username}`",
+            parse_mode="Markdown"
+        )
 
 
 def setup_handlers(app: Application):
-    """Setup all command and callback handlers."""
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("restart", restart_command))
@@ -387,14 +418,12 @@ def setup_handlers(app: Application):
 
 
 async def start_bot():
-    """Start the Telegram bot (polling mode)."""
     global application
     
     if not settings.telegram_bot_token:
         logger.warning("Telegram bot token not configured, bot disabled")
         return
-    
-    # If webhook URL is configured, don't start polling - webhook mode will be used
+
     if settings.telegram_webhook_url:
         logger.info("Webhook URL configured, bot will run in webhook mode")
         return
@@ -413,7 +442,6 @@ async def start_bot():
 
 
 async def start_bot_webhook() -> Application:
-    """Initialize bot for webhook mode (called from FastAPI)."""
     global application
     
     if not settings.telegram_bot_token:
@@ -425,8 +453,7 @@ async def start_bot_webhook() -> Application:
     
     await application.initialize()
     await application.start()
-    
-    # Set webhook with Telegram
+
     webhook_url = settings.telegram_webhook_url.rstrip('/') + settings.telegram_webhook_path
     await application.bot.set_webhook(
         url=webhook_url,
@@ -439,7 +466,6 @@ async def start_bot_webhook() -> Application:
 
 
 async def process_webhook_update(update_data: dict):
-    """Process incoming webhook update from Telegram."""
     global application
     
     if not application:
@@ -454,7 +480,6 @@ async def stop_bot():
     global application
     
     if application:
-        # Remove webhook if it was set
         if settings.telegram_webhook_url:
             try:
                 await application.bot.delete_webhook()

@@ -169,13 +169,13 @@
           description: !unsafe "Network receive traffic on {{ $labels.device }} is above 800 Mbps"
 
       - alert: WireGuardPeerDown
-        expr: wireguard_latest_handshake_seconds > 180
+        expr: wireguard_latest_handshake_delay_seconds > 180
         for: 3m
         labels:
           severity: warning
         annotations:
           summary: !unsafe "WireGuard peer inactive on {{ $labels.instance }}"
-          description: !unsafe "WireGuard peer {{ $labels.public_key }} has not had a handshake for over 3 minutes"
+          description: !unsafe "WireGuard peer {{ $labels.public_key }} has not had a handshake for over 3 minutes (delay: {{ $value | humanizeDuration }})"
 
       - alert: WireGuardNoMetrics
         expr: up{job="wireguard"} == 1 unless on(instance) (count by(instance) (wireguard_sent_bytes_total) > 0)

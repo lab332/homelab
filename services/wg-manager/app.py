@@ -244,6 +244,22 @@ async def get_user_qr(username: str, authorized: bool = Depends(verify_api_key))
     )
 
 
+@app.get("/get_user_info/{user}")
+async def get_user_info(user: str, authorized: bool = Depends(verify_api_key)):
+    """Get user QR code."""
+    from pathlib import Path
+    qr_path = Path(settings.wg_clients_dir) / user / f"{user}.png"
+    
+    if not qr_path.exists():
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    return FileResponse(
+        qr_path,
+        media_type="image/png",
+        filename=f"{user}.png"
+    )
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(
