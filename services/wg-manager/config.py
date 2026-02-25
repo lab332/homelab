@@ -32,6 +32,8 @@ class Settings(BaseSettings):
     wg_endpoint: str = ""  # Public endpoint for clients (IP or hostname)
     wg_endpoint_port: int = 17968
     wg_traffic_db: str = "/etc/wg-manager/traffic.db"
+    wg_traffic_limit_gb: int = 50  # Monthly limit per user in GiB (0 = disabled)
+    wg_traffic_alert_pct: str = "80,100"  # Comma-separated thresholds to alert at
     
     class Config:
         env_file = "/etc/wg-manager/.env"

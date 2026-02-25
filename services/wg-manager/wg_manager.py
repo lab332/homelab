@@ -230,6 +230,15 @@ def _get_db() -> sqlite3.Connection:
             PRIMARY KEY (public_key, date)
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS traffic_alerts (
+            public_key TEXT,
+            month      TEXT,
+            threshold  INTEGER,
+            alerted_at TEXT,
+            PRIMARY KEY (public_key, month, threshold)
+        )
+    """)
     conn.commit()
     return conn
 
@@ -358,13 +367,19 @@ def _parse_wg_dump(dump_output: str, peer_map: dict) -> list:
 
 
 def get_traffic_stats() -> dict:
+    """Get cumulative traffic stats for known client peers only.
+
+    Infrastructure peers (external node, etc.) are excluded -- their traffic
+    is an aggregate of client traffic and would cause double-counting.
+    """
     peer_map = _get_peer_to_user_map()
     dump_output = snapshot_traffic()
 
     if dump_output is None:
         return {"success": False, "error": "Failed to read WG counters", "peers": []}
 
-    peers = _parse_wg_dump(dump_output, peer_map)
+    all_peers = _parse_wg_dump(dump_output, peer_map)
+    peers = [p for p in all_peers if p.public_key in peer_map]
 
     conn = _get_db()
     try:
@@ -403,6 +418,8 @@ def get_traffic_history(days: int = 7) -> List[dict]:
 
     snapshots: dict[str, dict[str, tuple]] = {}
     for pubkey, date, rx, tx in rows:
+        if pubkey not in peer_map:
+            continue
         snapshots.setdefault(pubkey, {})[date] = (rx, tx)
 
     all_dates = sorted({r[1] for r in rows})
@@ -454,6 +471,187 @@ def format_traffic_history(history: List[dict]) -> str:
     return "\n".join(lines)
 
 
+def get_monthly_usage() -> dict:
+    """Return cumulative traffic per peer for the current calendar month.
+
+    Returns {public_key: total_bytes_this_month}.
+    """
+    peer_map = _get_peer_to_user_map()
+    now = datetime.utcnow()
+    month_start = now.strftime("%Y-%m-01")
+    today = now.strftime("%Y-%m-%d")
+
+    conn = _get_db()
+    try:
+        rows = conn.execute(
+            "SELECT public_key, MIN(date) as first_date, MAX(date) as last_date "
+            "FROM traffic_daily WHERE date >= ? GROUP BY public_key",
+            (month_start,),
+        ).fetchall()
+
+        usage = {}
+        for pubkey, first_date, last_date in rows:
+            if pubkey not in peer_map:
+                continue
+            if first_date == last_date:
+                row = conn.execute(
+                    "SELECT rx_bytes, tx_bytes FROM traffic_daily "
+                    "WHERE public_key = ? AND date = ?",
+                    (pubkey, last_date),
+                ).fetchone()
+                prev = conn.execute(
+                    "SELECT rx_bytes, tx_bytes FROM traffic_daily "
+                    "WHERE public_key = ? AND date < ? ORDER BY date DESC LIMIT 1",
+                    (pubkey, month_start),
+                ).fetchone()
+                if row and prev:
+                    usage[pubkey] = max((row[0] - prev[0]) + (row[1] - prev[1]), 0)
+                elif row:
+                    usage[pubkey] = row[0] + row[1]
+            else:
+                first_row = conn.execute(
+                    "SELECT rx_bytes, tx_bytes FROM traffic_daily "
+                    "WHERE public_key = ? AND date = ?",
+                    (pubkey, first_date),
+                ).fetchone()
+                last_row = conn.execute(
+                    "SELECT rx_bytes, tx_bytes FROM traffic_daily "
+                    "WHERE public_key = ? AND date = ?",
+                    (pubkey, last_date),
+                ).fetchone()
+                if first_row and last_row:
+                    prev = conn.execute(
+                        "SELECT rx_bytes, tx_bytes FROM traffic_daily "
+                        "WHERE public_key = ? AND date < ? ORDER BY date DESC LIMIT 1",
+                        (pubkey, month_start),
+                    ).fetchone()
+                    base_rx, base_tx = prev if prev else (first_row[0], first_row[1])
+                    usage[pubkey] = max(
+                        (last_row[0] - base_rx) + (last_row[1] - base_tx), 0
+                    )
+    finally:
+        conn.close()
+
+    return usage
+
+
+def check_traffic_limits() -> List[dict]:
+    """Check all peers against monthly traffic limits.
+
+    Returns list of events for new threshold crossings.
+    Each event: {"username", "public_key", "usage", "limit", "pct", "action"}
+    action is "warn" for sub-100% thresholds, "blocked" for 100%.
+    """
+    if not settings.wg_traffic_limit_gb:
+        return []
+
+    limit_bytes = settings.wg_traffic_limit_gb * 1024 ** 3
+    thresholds = sorted(
+        int(t.strip()) for t in settings.wg_traffic_alert_pct.split(",") if t.strip()
+    )
+    peer_map = _get_peer_to_user_map()
+    month = datetime.utcnow().strftime("%Y-%m")
+    usage_map = get_monthly_usage()
+
+    events = []
+    conn = _get_db()
+    try:
+        for pubkey, used in usage_map.items():
+            username = peer_map.get(pubkey)
+            if not username:
+                continue
+            pct = (used / limit_bytes) * 100 if limit_bytes else 0
+
+            for threshold in thresholds:
+                if pct < threshold:
+                    break
+
+                already = conn.execute(
+                    "SELECT 1 FROM traffic_alerts "
+                    "WHERE public_key = ? AND month = ? AND threshold = ?",
+                    (pubkey, month, threshold),
+                ).fetchone()
+                if already:
+                    continue
+
+                conn.execute(
+                    "INSERT INTO traffic_alerts (public_key, month, threshold, alerted_at) "
+                    "VALUES (?, ?, ?, ?)",
+                    (pubkey, month, threshold, datetime.utcnow().isoformat()),
+                )
+
+                if threshold >= 100:
+                    disable_peer(pubkey)
+                    action = "blocked"
+                else:
+                    action = "warn"
+
+                events.append({
+                    "username": username,
+                    "public_key": pubkey,
+                    "usage": used,
+                    "limit": limit_bytes,
+                    "pct": threshold,
+                    "action": action,
+                })
+
+        conn.commit()
+    finally:
+        conn.close()
+
+    return events
+
+
+def disable_peer(public_key: str) -> CommandResult:
+    """Remove a peer from the live WG interface (reversible, config untouched)."""
+    return run_local_command(
+        f"wg set {settings.wg_interface} peer {public_key} remove"
+    )
+
+
+def enable_peer(public_key: str) -> CommandResult:
+    """Re-add all configured peers (restores a previously disabled peer)."""
+    return run_local_command(
+        f"bash -c 'wg syncconf {settings.wg_interface} "
+        f"<(wg-quick strip {settings.wg_interface})'"
+    )
+
+
+def enable_all_peers() -> CommandResult:
+    """Re-add all configured peers -- used for monthly reset."""
+    return run_local_command(
+        f"bash -c 'wg syncconf {settings.wg_interface} "
+        f"<(wg-quick strip {settings.wg_interface})'"
+    )
+
+
+def is_peer_blocked(username: str) -> bool:
+    clients_dir = Path(settings.wg_clients_dir)
+    pubkey_file = clients_dir / username / "publickey"
+    if not pubkey_file.exists():
+        return False
+
+    pubkey = pubkey_file.read_text().strip()
+    result = run_local_command(f"wg show {settings.wg_interface} peers")
+    if not result.success:
+        return False
+
+    active_peers = result.output.strip().split("\n")
+    return pubkey not in active_peers
+
+
+def get_user_ip(username: str) -> str:
+    """Read the user's AllowedIPs from their config file."""
+    config_path = Path(settings.wg_clients_dir) / username / f"{username}.conf"
+    if not config_path.exists():
+        return "?"
+    for line in config_path.read_text().splitlines():
+        line = line.strip()
+        if line.startswith("Address"):
+            return line.split("=", 1)[1].strip()
+    return "?"
+
+
 def format_traffic_report(stats: dict) -> str:
     if not stats["success"]:
         return f"❌ Failed to get traffic stats: {stats['error']}"
@@ -462,6 +660,8 @@ def format_traffic_report(stats: dict) -> str:
     if not peers:
         return "📊 No peers found"
 
+    monthly = get_monthly_usage() if settings.wg_traffic_limit_gb else {}
+    limit_bytes = settings.wg_traffic_limit_gb * 1024 ** 3
     total_rx = sum(p.rx_bytes for p in peers)
     total_tx = sum(p.tx_bytes for p in peers)
 
@@ -473,6 +673,11 @@ def format_traffic_report(stats: dict) -> str:
         ) else "⚪"
         lines.append(f"{status} *{p.username}*")
         lines.append(f"    ↓ `{_format_bytes(p.rx_bytes)}` ↑ `{_format_bytes(p.tx_bytes)}`  Σ `{_format_bytes(total)}`")
+        if p.public_key in monthly and limit_bytes:
+            used = monthly[p.public_key]
+            pct = min(used / limit_bytes * 100, 999)
+            bar = "▓" * int(pct // 10) + "░" * (10 - int(pct // 10))
+            lines.append(f"    📅 `{_format_bytes(used)}` / `{_format_bytes(limit_bytes)}` ({pct:.0f}%) `{bar}`")
         lines.append(f"    🤝 {_format_handshake(p.latest_handshake)}")
         if p.endpoint:
             lines.append(f"    🌐 `{p.endpoint}`")

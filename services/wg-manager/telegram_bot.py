@@ -406,29 +406,92 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             keyboard = []
             for user in users:
-                keyboard.append([InlineKeyboardButton(f"👤 {user}", callback_data=f"user_info_{user}")])
+                keyboard.append([InlineKeyboardButton(f"👤 {user}", callback_data=f"ucard_{user}")])
             reply_markup = InlineKeyboardMarkup(keyboard)
             await query.edit_message_text(
-                "📱 *Select user to get QR code:*",
+                "👤 *Select user:*",
                 reply_markup=reply_markup,
-                parse_mode="Markdown"
+                parse_mode="Markdown",
             )
-    
-    elif data.startswith("user_info_"):
-        username = data.replace("user_info_", "")
+
+    elif data.startswith("ucard_"):
+        username = data[6:]
+        await _show_user_card(query, username)
+
+    elif data.startswith("user_qr_"):
+        username = data[8:]
         from pathlib import Path
         qr_path = Path(settings.wg_clients_dir) / username / f"{username}.png"
-        
         if not qr_path.exists():
-            await query.answer("❌ User not found", show_alert=True)
+            await query.answer("❌ QR not found", show_alert=True)
             return
-        
         await query.answer()
         await query.message.reply_photo(
             photo=open(qr_path, 'rb'),
             caption=f"📱 QR code for `{username}`",
-            parse_mode="Markdown"
+            parse_mode="Markdown",
         )
+
+    elif data.startswith("user_block_"):
+        username = data[11:]
+        from pathlib import Path
+        pubkey_file = Path(settings.wg_clients_dir) / username / "publickey"
+        if not pubkey_file.exists():
+            await query.answer("❌ User not found", show_alert=True)
+            return
+        pubkey = pubkey_file.read_text().strip()
+        wg_manager.disable_peer(pubkey)
+        await query.answer("🚫 Peer blocked")
+        await _show_user_card(query, username)
+
+    elif data.startswith("user_unblock_"):
+        username = data[13:]
+        from pathlib import Path
+        pubkey_file = Path(settings.wg_clients_dir) / username / "publickey"
+        if not pubkey_file.exists():
+            await query.answer("❌ User not found", show_alert=True)
+            return
+        pubkey = pubkey_file.read_text().strip()
+        wg_manager.enable_peer(pubkey)
+        await query.answer("✅ Peer unblocked")
+        await _show_user_card(query, username)
+
+
+async def _show_user_card(query, username: str):
+    """Render a user card with status info and action buttons."""
+    from pathlib import Path as _Path
+
+    blocked = wg_manager.is_peer_blocked(username)
+    ip_addr = wg_manager.get_user_ip(username)
+    status_icon = "🚫" if blocked else "✅"
+    status_text = "blocked" if blocked else "active"
+
+    text = f"👤 *{username}*\n"
+    text += f"🌐 `{ip_addr}`\n"
+
+    if settings.wg_traffic_limit_gb:
+        monthly = wg_manager.get_monthly_usage()
+        pubkey_file = _Path(settings.wg_clients_dir) / username / "publickey"
+        if pubkey_file.exists():
+            pubkey = pubkey_file.read_text().strip()
+            used = monthly.get(pubkey, 0)
+            limit = settings.wg_traffic_limit_gb * 1024 ** 3
+            pct = min(used / limit * 100, 999) if limit else 0
+            text += f"📅 `{wg_manager._format_bytes(used)}` / `{wg_manager._format_bytes(limit)}` ({pct:.0f}%)\n"
+
+    text += f"{status_icon} Status: *{status_text}*"
+
+    if blocked:
+        action_btn = InlineKeyboardButton("✅ Unblock", callback_data=f"user_unblock_{username}")
+    else:
+        action_btn = InlineKeyboardButton("🚫 Block", callback_data=f"user_block_{username}")
+
+    keyboard = [[
+        InlineKeyboardButton("📱 QR Code", callback_data=f"user_qr_{username}"),
+        action_btn,
+    ]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.edit_message_text(text, reply_markup=reply_markup, parse_mode="Markdown")
 
 
 async def send_weekly_traffic_report(context: ContextTypes.DEFAULT_TYPE):
@@ -460,8 +523,57 @@ async def send_weekly_traffic_report(context: ContextTypes.DEFAULT_TYPE):
 
 
 async def periodic_traffic_snapshot(context: ContextTypes.DEFAULT_TYPE):
-    """Periodic job: snapshot WG counters to persist cumulative traffic."""
+    """Periodic job: snapshot WG counters, then check traffic limits."""
     wg_manager.snapshot_traffic()
+
+    if not settings.telegram_chat_id:
+        return
+
+    events = wg_manager.check_traffic_limits()
+    for ev in events:
+        used = wg_manager._format_bytes(ev["usage"])
+        limit = wg_manager._format_bytes(ev["limit"])
+        if ev["action"] == "blocked":
+            text = (
+                f"🚫 *Traffic limit exceeded*\n\n"
+                f"👤 `{ev['username']}`\n"
+                f"📊 `{used}` / `{limit}` ({ev['pct']}%)\n"
+                f"⛔ Peer blocked"
+            )
+        else:
+            text = (
+                f"⚠️ *Approaching traffic limit*\n\n"
+                f"👤 `{ev['username']}`\n"
+                f"📊 `{used}` / `{limit}` ({ev['pct']}%)"
+            )
+        try:
+            msg = await context.bot.send_message(
+                chat_id=settings.telegram_chat_id,
+                text=text,
+                parse_mode="Markdown",
+            )
+            asyncio.create_task(auto_delete_message(msg))
+        except Exception as e:
+            logger.error(f"Failed to send traffic alert: {e}")
+
+
+async def monthly_reset(context: ContextTypes.DEFAULT_TYPE):
+    """1st of each month: re-enable all blocked peers."""
+    from datetime import datetime as _dt
+    if _dt.utcnow().day != 1:
+        return
+    result = wg_manager.enable_all_peers()
+    logger.info(f"Monthly reset: enable_all_peers -> {result.success}")
+    if settings.telegram_chat_id:
+        try:
+            msg = await context.bot.send_message(
+                chat_id=settings.telegram_chat_id,
+                text="🔄 *Monthly reset*: all peers re\\-enabled, traffic counters start fresh\\.",
+                parse_mode="MarkdownV2",
+            )
+            asyncio.create_task(auto_delete_message(msg))
+        except Exception as e:
+            logger.error(f"Failed to send monthly reset notification: {e}")
 
 
 def schedule_jobs(app: Application):
@@ -482,6 +594,14 @@ def schedule_jobs(app: Application):
             name="weekly_traffic_report",
         )
         logger.info("Weekly traffic report scheduled for Sundays at 10:00 UTC")
+
+    app.job_queue.run_daily(
+        monthly_reset,
+        time=dt_time(hour=0, minute=5, second=0),
+        days=tuple(range(7)),
+        name="monthly_reset",
+    )
+    logger.info("Monthly reset scheduled for 1st of each month at 00:05 UTC")
 
 
 def setup_handlers(app: Application):
