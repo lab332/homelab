@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 import asyncio
 import logging
+from datetime import time as dt_time
+
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -56,6 +58,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ],
         [
             InlineKeyboardButton("📊 Status", callback_data="status"),
+            InlineKeyboardButton("📈 Traffic", callback_data="traffic"),
         ],
         [
             InlineKeyboardButton("👤 Create User", callback_data="create_user_prompt"),
@@ -93,6 +96,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /restart\\_internal - Restart internal node
 /restart\\_external - Restart external node
 /status - Show tunnel status
+/traffic - Show per\-user traffic stats
 /create\\_user <name> - Create new user
 /delete\\_user <name> - Delete user
 /list\\_users - List all users
@@ -186,6 +190,22 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if external.output:
         output = external.output[:500] + "..." if len(external.output) > 500 else external.output
         response += f"```\n{output}\n```"
+    
+    await msg.edit_text(response, parse_mode="Markdown")
+    asyncio.create_task(auto_delete_message(msg))
+    asyncio.create_task(auto_delete_message(update.message, 5))
+
+
+async def traffic_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_authorized(update.effective_chat.id):
+        msg = await update.message.reply_text(f"⛔ Access denied. Chat ID: `{update.effective_chat.id}`", parse_mode="Markdown")
+        asyncio.create_task(auto_delete_message(msg, 60))
+        return
+    
+    msg = await update.message.reply_text("📈 Collecting traffic stats...")
+    
+    stats = wg_manager.get_traffic_stats()
+    response = wg_manager.format_traffic_report(stats)
     
     await msg.edit_text(response, parse_mode="Markdown")
     asyncio.create_task(auto_delete_message(msg))
@@ -342,6 +362,13 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(response, parse_mode="Markdown")
         asyncio.create_task(auto_delete_message(query.message))
     
+    elif data == "traffic":
+        await query.edit_message_text("📈 Collecting traffic stats...")
+        stats = wg_manager.get_traffic_stats()
+        response = wg_manager.format_traffic_report(stats)
+        await query.edit_message_text(response, parse_mode="Markdown")
+        asyncio.create_task(auto_delete_message(query.message))
+    
     elif data == "list_users":
         users = wg_manager.list_users()
         if not users:
@@ -404,6 +431,59 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
+async def send_weekly_traffic_report(context: ContextTypes.DEFAULT_TYPE):
+    """Scheduled job: send weekly WG traffic report to the configured chat."""
+    if not settings.telegram_chat_id:
+        logger.warning("No chat ID configured, skipping weekly traffic report")
+        return
+
+    stats = wg_manager.get_traffic_stats()
+    report = wg_manager.format_traffic_report(stats)
+
+    history = wg_manager.get_traffic_history(7)
+    history_block = wg_manager.format_traffic_history(history)
+
+    header = "📅 *Weekly Traffic Report*\n\n"
+    text = header + report
+    if history_block:
+        text += "\n" + history_block
+
+    try:
+        msg = await context.bot.send_message(
+            chat_id=settings.telegram_chat_id,
+            text=text,
+            parse_mode="Markdown",
+        )
+        asyncio.create_task(auto_delete_message(msg))
+    except Exception as e:
+        logger.error(f"Failed to send weekly traffic report: {e}")
+
+
+async def periodic_traffic_snapshot(context: ContextTypes.DEFAULT_TYPE):
+    """Periodic job: snapshot WG counters to persist cumulative traffic."""
+    wg_manager.snapshot_traffic()
+
+
+def schedule_jobs(app: Application):
+    """Register all periodic jobs on the application's job queue."""
+    app.job_queue.run_repeating(
+        periodic_traffic_snapshot,
+        interval=300,
+        first=60,
+        name="traffic_snapshot",
+    )
+    logger.info("Traffic snapshot scheduled every 5 minutes")
+
+    if settings.telegram_chat_id:
+        app.job_queue.run_daily(
+            send_weekly_traffic_report,
+            time=dt_time(hour=10, minute=0, second=0),
+            days=(6,),
+            name="weekly_traffic_report",
+        )
+        logger.info("Weekly traffic report scheduled for Sundays at 10:00 UTC")
+
+
 def setup_handlers(app: Application):
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
@@ -411,6 +491,7 @@ def setup_handlers(app: Application):
     app.add_handler(CommandHandler("restart_internal", restart_internal_command))
     app.add_handler(CommandHandler("restart_external", restart_external_command))
     app.add_handler(CommandHandler("status", status_command))
+    app.add_handler(CommandHandler("traffic", traffic_command))
     app.add_handler(CommandHandler("create_user", create_user_command))
     app.add_handler(CommandHandler("delete_user", delete_user_command))
     app.add_handler(CommandHandler("list_users", list_users_command))
@@ -430,6 +511,7 @@ async def start_bot():
     
     application = Application.builder().token(settings.telegram_bot_token).build()
     setup_handlers(application)
+    schedule_jobs(application)
 
     await application.initialize()
     await application.start()
@@ -450,6 +532,7 @@ async def start_bot_webhook() -> Application:
     
     application = Application.builder().token(settings.telegram_bot_token).build()
     setup_handlers(application)
+    schedule_jobs(application)
     
     await application.initialize()
     await application.start()

@@ -244,6 +244,37 @@ async def get_user_qr(username: str, authorized: bool = Depends(verify_api_key))
     )
 
 
+@app.get("/traffic")
+async def get_traffic(
+    days: Optional[int] = None,
+    authorized: bool = Depends(verify_api_key),
+):
+    stats = wg_manager.get_traffic_stats()
+    if not stats["success"]:
+        raise HTTPException(status_code=500, detail=stats["error"])
+
+    result = {
+        "peers": [
+            {
+                "username": p.username,
+                "public_key": p.public_key,
+                "endpoint": p.endpoint,
+                "allowed_ips": p.allowed_ips,
+                "latest_handshake": p.latest_handshake,
+                "rx_bytes": p.rx_bytes,
+                "tx_bytes": p.tx_bytes,
+                "total_bytes": p.rx_bytes + p.tx_bytes,
+            }
+            for p in stats["peers"]
+        ]
+    }
+
+    if days is not None and days > 0:
+        result["history"] = wg_manager.get_traffic_history(days)
+
+    return result
+
+
 @app.get("/get_user_info/{user}")
 async def get_user_info(user: str, authorized: bool = Depends(verify_api_key)):
     """Get user QR code."""

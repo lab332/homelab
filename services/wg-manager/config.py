@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     wg_clients_dir: str = "/etc/wireguard/clients"
     wg_endpoint: str = ""  # Public endpoint for clients (IP or hostname)
     wg_endpoint_port: int = 17968
+    wg_traffic_db: str = "/etc/wg-manager/traffic.db"
     
     class Config:
         env_file = "/etc/wg-manager/.env"
