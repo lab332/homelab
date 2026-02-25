@@ -1,20 +1,10 @@
 ---
-- name: Install Python and pip
-  ansible.builtin.apt:
-    name:
-      - python3
-      - python3-pip
-      - python3-venv
-    state: present
-    update_cache: true
-  become: true
-
 - name: Create wg-manager directories
   ansible.builtin.file:
     path: "{{ item }}"
     state: directory
-    owner: "{{ wg_manager_user }}"
-    group: "{{ wg_manager_group }}"
+    owner: root
+    group: root
     mode: "0755"
   loop:
     - "{{ wg_manager_install_dir }}"
@@ -26,8 +16,8 @@
   ansible.builtin.copy:
     src: "{{ playbook_dir }}/../../services/wg-manager/{{ item }}"
     dest: "{{ wg_manager_install_dir }}/"
-    owner: "{{ wg_manager_user }}"
-    group: "{{ wg_manager_group }}"
+    owner: root
+    group: root
     mode: "0644"
   loop:
     - app.py
@@ -35,48 +25,39 @@
     - wg_manager.py
     - telegram_bot.py
     - requirements.txt
+    - Dockerfile
+  become: true
+  notify: Rebuild wg-manager
+
+- name: Deploy docker-compose.yml
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ wg_manager_install_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0644"
   become: true
   notify: Restart wg-manager
-
-- name: Create Python virtual environment
-  ansible.builtin.command:
-    cmd: "{{ wg_manager_python_version }} -m venv {{ wg_manager_venv_path }}"
-    creates: "{{ wg_manager_venv_path }}/bin/activate"
-  become: true
-
-- name: Install Python dependencies
-  ansible.builtin.pip:
-    requirements: "{{ wg_manager_install_dir }}/requirements.txt"
-    virtualenv: "{{ wg_manager_venv_path }}"
-    state: present
-  become: true
 
 - name: Deploy environment configuration
   ansible.builtin.template:
     src: env.j2
     dest: "{{ wg_manager_config_dir }}/.env"
-    owner: "{{ wg_manager_user }}"
-    group: "{{ wg_manager_group }}"
+    owner: root
+    group: root
     mode: "0600"
   become: true
   notify: Restart wg-manager
 
-- name: Deploy systemd service
-  ansible.builtin.template:
-    src: wg-manager.service.j2
-    dest: /etc/systemd/system/wg-manager.service
-    owner: root
-    group: root
-    mode: "0644"
+- name: Build wg-manager Docker image
+  community.docker.docker_compose_v2:
+    project_src: "{{ wg_manager_install_dir }}"
+    build: always
+    state: present
   become: true
-  notify:
-    - Reload systemd
-    - Restart wg-manager
 
-- name: Enable and start wg-manager service
-  ansible.builtin.systemd:
-    name: wg-manager
-    enabled: true
-    state: started
-    daemon_reload: true
+- name: Start wg-manager container
+  community.docker.docker_compose_v2:
+    project_src: "{{ wg_manager_install_dir }}"
+    state: present
   become: true

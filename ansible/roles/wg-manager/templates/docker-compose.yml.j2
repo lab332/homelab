@@ -1,0 +1,16 @@
+# {{ ansible_managed }}
+services:
+  wg-manager:
+    build: .
+    image: wg-manager:latest
+    container_name: wg-manager
+    restart: unless-stopped
+    network_mode: host
+    privileged: true
+    volumes:
+      - /run/wireguard:/run/wireguard
+      - /etc/wireguard:/etc/wireguard
+      - {{ wg_manager_config_dir }}:{{ wg_manager_config_dir }}
+      - {{ wg_manager_external_ssh_key }}:{{ wg_manager_external_ssh_key }}:ro
+    env_file:
+      - {{ wg_manager_config_dir }}/.env

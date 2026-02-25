@@ -1,11 +1,13 @@
 ---
-- name: Reload systemd
-  ansible.builtin.systemd:
-    daemon_reload: true
+- name: Rebuild wg-manager
+  community.docker.docker_compose_v2:
+    project_src: "{{ wg_manager_install_dir }}"
+    build: always
+    state: present
   become: true
 
 - name: Restart wg-manager
-  ansible.builtin.systemd:
-    name: wg-manager
+  community.docker.docker_compose_v2:
+    project_src: "{{ wg_manager_install_dir }}"
     state: restarted
   become: true

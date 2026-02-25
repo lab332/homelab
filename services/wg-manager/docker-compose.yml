@@ -1,0 +1,15 @@
+services:
+  wg-manager:
+    build: .
+    image: wg-manager:latest
+    container_name: wg-manager
+    restart: unless-stopped
+    network_mode: host
+    privileged: true
+    volumes:
+      - /run/wireguard:/run/wireguard
+      - /etc/wireguard:/etc/wireguard
+      - /etc/wg-manager:/etc/wg-manager
+      - ${WG_MANAGER_EXTERNAL_SSH_KEY:-/root/.ssh/id_ed25519}:${WG_MANAGER_EXTERNAL_SSH_KEY:-/root/.ssh/id_ed25519}:ro
+    env_file:
+      - /etc/wg-manager/.env

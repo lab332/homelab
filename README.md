@@ -34,7 +34,7 @@ Ansible-конфигурация для развёртывания VPN-инфр�
 │                             │   │                             │
 │  ┌─────────────────────┐    │   │                             │
 │  │ WG Manager Bot      │    │   │                             │
-│  │ (Telegram)          │    │   │                             │
+│  │ (Docker, Telegram)  │    │   │                             │
 │  └─────────────────────┘    │   │                             │
 │                             │   │                             │
 │  ┌─────────────────────┐    │   │                             │
@@ -236,7 +236,7 @@ vpn.yml (базовый)
 | Playbook | Зависимости | Можно запускать отдельно? |
 |----------|-------------|---------------------------|
 | `vpn.yml` | Нет | ✅ Да |
-| `wg-manager.yml` | `vpn.yml` | ⚠️ Требует WireGuard |
+| `wg-manager.yml` | `vpn.yml`, Docker | ⚠️ Требует WireGuard и Docker |
 | `monitoring.yml` | Docker на хостах | ✅ Да (Docker ставится автоматически) |
 | `monitoring.yml --tags nginx_ssl` | Домен в Cloudflare | ✅ Да |
 
@@ -259,6 +259,18 @@ ansible-playbook playbooks/monitoring.yml --tags nginx_ssl
 ## Структура проекта
 
 ```
+services/
+└── wg-manager/
+    ├── Dockerfile             # Образ: python:3.12-slim + wireguard-tools, iptables, nftables, qrencode
+    ├── docker-compose.yml     # Запуск: privileged, host network, volumes
+    ├── .dockerignore
+    ├── app.py                 # FastAPI приложение + webhook
+    ├── telegram_bot.py        # Telegram бот (команды, меню, scheduled jobs)
+    ├── wg_manager.py          # Логика: управление WG, трафик, пользователи
+    ├── config.py              # Pydantic Settings из /etc/wg-manager/.env
+    ├── requirements.txt       # Python-зависимости
+    └── env.example            # Пример .env
+
 ansible/
 ├── ansible.cfg                 # Конфигурация Ansible
 ├── requirements.yml            # Зависимости (Galaxy)
@@ -269,11 +281,17 @@ ansible/
 │       └── vpn.yml            # Переменные для группы vpn
 ├── playbooks/
 │   ├── vpn.yml                # WireGuard VPN
-│   ├── wg-manager.yml         # Telegram бот
+│   ├── wg-manager.yml         # Telegram бот (Docker)
 │   └── monitoring.yml         # Prometheus + Alertmanager
 └── roles/
     ├── wireguard/             # Роль WireGuard
-    ├── wg-manager/            # Роль Telegram бота
+    ├── wg-manager/            # Роль Telegram бота (Docker deployment)
+    │   ├── tasks/main.yml     # Копирует файлы, собирает образ, запускает контейнер
+    │   ├── templates/
+    │   │   ├── docker-compose.yml.j2
+    │   │   └── env.j2
+    │   ├── handlers/main.yml  # Rebuild / Restart через docker compose
+    │   └── defaults/main.yml
     ├── wireguard_exporter/    # Экспортер метрик WG
     └── nginx_ssl/             # Nginx + Let's Encrypt
 ```
@@ -300,16 +318,22 @@ ping 10.20.30.2  # external
 
 ### WG Manager (wg-manager.yml)
 
-Telegram бот для управления VPN клиентами.
+Telegram бот для управления VPN клиентами. Работает в Docker-контейнере на internal ноде.
 
 **Функции:**
 - `/start` — главное меню
 - Создание/удаление клиентов
 - QR-коды для мобильных
-- Перезапуск туннелей
+- Перезапуск туннелей (internal — `wg-quick down/up` из контейнера, external — по SSH)
 - Статус подключений
+- Мониторинг трафика с лимитами и автоблокировкой
 
-**Режимы работы:**
+**Docker:**
+- Образ собирается локально из `services/wg-manager/Dockerfile`
+- Контейнер работает с `privileged: true` и `network_mode: host` — нужно для управления WireGuard интерфейсом на хосте
+- Volumes: `/etc/wireguard`, `/etc/wg-manager`, `/run/wireguard`, SSH-ключ для внешней ноды
+
+**Режимы Telegram:**
 - **Polling** (по умолчанию) — бот сам опрашивает Telegram
 - **Webhook** (рекомендуется) — Telegram отправляет обновления на HTTPS endpoint
 
@@ -342,8 +366,11 @@ Telegram бот для управления VPN клиентами.
 ## Обновление
 
 ```bash
-# Обновить код на сервере
+# Обновить WG Manager (пересобирает Docker-образ и перезапускает контейнер)
 ansible-playbook playbooks/wg-manager.yml
+
+# Или вручную на сервере
+ssh root@YOUR_IP 'cd /opt/wg-manager && docker compose up -d --build'
 
 # Обновить только мониторинг
 ansible-playbook playbooks/monitoring.yml
@@ -370,11 +397,17 @@ ssh root@YOUR_IP 'systemctl restart wg-quick@wg0'
 ### Бот не отвечает
 
 ```bash
-# Статус сервиса
-ssh root@YOUR_IP 'systemctl status wg-manager'
+# Статус контейнера
+ssh root@YOUR_IP 'docker ps -f name=wg-manager'
 
 # Логи
-ssh root@YOUR_IP 'journalctl -u wg-manager -f'
+ssh root@YOUR_IP 'docker logs --tail 50 -f wg-manager'
+
+# Перезапуск
+ssh root@YOUR_IP 'cd /opt/wg-manager && docker compose restart'
+
+# Пересборка (после изменения кода)
+ssh root@YOUR_IP 'cd /opt/wg-manager && docker compose up -d --build'
 
 # Проверить .env
 ssh root@YOUR_IP 'cat /etc/wg-manager/.env'
