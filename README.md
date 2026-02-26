@@ -440,6 +440,19 @@ ssh root@YOUR_IP 'cat /var/log/letsencrypt/letsencrypt.log'
 
 ## Безопасность
 
+### Проверки на GitHub
+
+В репозитории настроены автоматические проверки на уязвимости:
+
+| Инструмент | Назначение |
+|------------|------------|
+| **Dependabot** | Еженедельные PR с обновлениями зависимостей (pip, Docker, Actions) и алерты по известным CVE |
+| **CodeQL** | Статический анализ Python-кода (при push/PR и раз в неделю) |
+| **Security workflow** | `pip-audit` (зависимости Python), Bandit (SAST), Trivy (Dockerfile и файловая система) |
+
+- Конфигурация: `.github/dependabot.yml`, `.github/workflows/codeql.yml`, `.github/workflows/security.yml`
+- Для публичных репозиториев CodeQL и Dependabot доступны бесплатно. В Security → Dependabot / Code scanning можно просматривать алерты.
+
 ⚠️ **Не коммитьте `inventory/hosts.yml` с реальными данными!**
 
 Файл уже добавлен в `.gitignore`. Используйте `hosts.yml.example` как шаблон.
