@@ -6,7 +6,7 @@ import logging
 from datetime import datetime, timedelta
 from pathlib import Path
 from dataclasses import dataclass
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple, List, Union
 import paramiko
 
 from config import settings
@@ -21,19 +21,33 @@ class CommandResult:
     error: str = ""
 
 
-def run_local_command(command: str) -> CommandResult:
+def run_local_command(
+    command: Union[str, List[str]],
+    *,
+    input_text: Optional[str] = None,
+) -> CommandResult:
     try:
-        result = subprocess.run(
-            command,
-            shell=True,
-            capture_output=True,
-            text=True,
-            timeout=30
-        )
+        if isinstance(command, list):
+            result = subprocess.run(
+                command,
+                shell=False,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                input=input_text,
+            )
+        else:
+            result = subprocess.run(
+                command,
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
         return CommandResult(
             success=result.returncode == 0,
-            output=result.stdout.strip(),
-            error=result.stderr.strip()
+            output=(result.stdout or "").strip(),
+            error=(result.stderr or "").strip(),
         )
     except subprocess.TimeoutExpired:
         return CommandResult(success=False, output="", error="Command timed out")
@@ -89,7 +103,7 @@ def restart_all() -> Tuple[CommandResult, CommandResult]:
 
 
 def get_status_internal() -> CommandResult:
-    return run_local_command("wg show")
+    return run_local_command(["wg", "show"])
 
 
 def get_status_external() -> CommandResult:
@@ -97,13 +111,13 @@ def get_status_external() -> CommandResult:
 
 
 def generate_keypair() -> Tuple[str, str]:
-    private_key_result = run_local_command("wg genkey")
+    private_key_result = run_local_command(["wg", "genkey"])
     if not private_key_result.success:
         raise Exception(f"Failed to generate private key: {private_key_result.error}")
     
     private_key = private_key_result.output
     
-    public_key_result = run_local_command(f"echo '{private_key}' | wg pubkey")
+    public_key_result = run_local_command(["wg", "pubkey"], input_text=private_key)
     if not public_key_result.success:
         raise Exception(f"Failed to generate public key: {public_key_result.error}")
     
@@ -141,17 +155,16 @@ def create_user(username: str) -> dict:
     (client_dir / "privatekey").write_text(private_key)
     (client_dir / "publickey").write_text(public_key)
 
-    server_pubkey_result = run_local_command(f"cat {settings.wg_keys_path}/publickey")
-    if not server_pubkey_result.success:
-        raise Exception(f"Failed to read server public key: {server_pubkey_result.error}")
-    
-    server_public_key = server_pubkey_result.output
+    server_pubkey_path = Path(settings.wg_keys_path) / "publickey"
+    if not server_pubkey_path.exists():
+        raise Exception(f"Server public key not found: {server_pubkey_path}")
+    server_public_key = server_pubkey_path.read_text().strip()
 
     if settings.wg_endpoint:
         endpoint = settings.wg_endpoint
     else:
         # Fallback: detect public IP (force IPv4)
-        endpoint_result = run_local_command("curl -4 -s ifconfig.me")
+        endpoint_result = run_local_command(["curl", "-4", "-s", "ifconfig.me"])
         endpoint = endpoint_result.output if endpoint_result.success else "CONFIGURE_ME"
     
     endpoint_port = settings.wg_endpoint_port
@@ -183,7 +196,10 @@ AllowedIPs = {client_ip}/32
         f.write(peer_config)
 
     qr_path = client_dir / f"{username}.png"
-    run_local_command(f"cat {config_path} | qrencode -t png -o {qr_path}")
+    run_local_command(
+        ["qrencode", "-t", "png", "-o", str(qr_path)],
+        input_text=client_config,
+    )
 
     run_local_command(f"bash -c 'wg syncconf {settings.wg_interface} <(wg-quick strip {settings.wg_interface})'")
     
@@ -244,7 +260,7 @@ def _get_db() -> sqlite3.Connection:
 
 
 def snapshot_traffic() -> Optional[str]:
-    result = run_local_command(f"wg show {settings.wg_interface} dump")
+    result = run_local_command(["wg", "show", settings.wg_interface, "dump"])
     if not result.success:
         logger.debug(f"snapshot_traffic: wg show failed: {result.error}")
         return None
@@ -536,12 +552,6 @@ def get_monthly_usage() -> dict:
 
 
 def check_traffic_limits() -> List[dict]:
-    """Check all peers against monthly traffic limits.
-
-    Returns list of events for new threshold crossings.
-    Each event: {"username", "public_key", "usage", "limit", "pct", "action"}
-    action is "warn" for sub-100% thresholds, "blocked" for 100%.
-    """
     if not settings.wg_traffic_limit_gb:
         return []
 
@@ -605,7 +615,7 @@ def check_traffic_limits() -> List[dict]:
 def disable_peer(public_key: str) -> CommandResult:
     """Remove a peer from the live WG interface (reversible, config untouched)."""
     return run_local_command(
-        f"wg set {settings.wg_interface} peer {public_key} remove"
+        ["wg", "set", settings.wg_interface, "peer", public_key, "remove"]
     )
 
 
@@ -632,7 +642,7 @@ def is_peer_blocked(username: str) -> bool:
         return False
 
     pubkey = pubkey_file.read_text().strip()
-    result = run_local_command(f"wg show {settings.wg_interface} peers")
+    result = run_local_command(["wg", "show", settings.wg_interface, "peers"])
     if not result.success:
         return False
 
