@@ -1,5 +1,4 @@
-from pydantic_settings import BaseSettings
-from typing import List
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -35,9 +34,10 @@ class Settings(BaseSettings):
     wg_traffic_limit_gb: int = 50  # Monthly limit per user in GiB (0 = disabled)
     wg_traffic_alert_pct: str = "80,100"  # Comma-separated thresholds to alert at
     
-    class Config:
-        env_file = "/etc/wg-manager/.env"
-        env_prefix = "WG_MANAGER_"
+    model_config = SettingsConfigDict(
+        env_file="/etc/wg-manager/.env",
+        env_prefix="WG_MANAGER_",
+    )
 
 
 settings = Settings()
