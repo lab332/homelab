@@ -24,7 +24,9 @@
         node_exporter_web_listen_address: "0.0.0.0:9100"
         node_exporter_enabled_collectors:
           - systemd
-        node_exporter_systemd_unit_include: "wg-quick@.*|wg-manager.*|node_exporter.*|nginx.*"
+        # После переезда WG Manager в Docker systemd-юнита больше нет,
+        # поэтому исключаем его из списка отслеживаемых сервисов.
+        node_exporter_systemd_unit_include: "wg-quick@.*|node_exporter.*|nginx.*"
 
 - name: Install WireGuard Exporter on all VPN hosts
   hosts: vpn
@@ -205,7 +207,9 @@
           description: "Node was restarted within the last 5 minutes"
 
       - alert: ServiceDown
-        expr: node_systemd_unit_state{name=~"wg-quick@.*|wg-manager.*", state="active"} != 1
+        # Следим только за systemd-сервисами WireGuard и инфраструктуры.
+        # WG Manager теперь работает в Docker, поэтому wg-manager.service исключён.
+        expr: node_systemd_unit_state{name=~"wg-quick@.*", state="active"} != 1
         for: 2m
         labels:
           severity: critical

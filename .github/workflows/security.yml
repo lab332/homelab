@@ -1,0 +1,86 @@
+# Дополнительные проверки безопасности: зависимости Python, линтер, образ Docker
+# Запуск: push/PR в main/master, еженедельно по расписанию
+
+name: Security checks
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - 'services/wg-manager/**'
+      - 'ansible/requirements.txt'
+      - '.github/workflows/security.yml'
+  pull_request:
+    branches: [main, master]
+    paths:
+      - 'services/wg-manager/**'
+      - 'ansible/requirements.txt'
+      - '.github/workflows/security.yml'
+  schedule:
+    - cron: '0 7 * * 1'
+
+jobs:
+  python-deps:
+    name: Python dependencies audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: pip audit — WG Manager
+        run: |
+          pip install pip-audit
+          pip-audit -r services/wg-manager/requirements.txt --desc
+        continue-on-error: true
+
+      - name: pip audit — Ansible
+        run: |
+          pip-audit -r ansible/requirements.txt --desc
+        continue-on-error: true
+
+  bandit:
+    name: Bandit (Python SAST)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Bandit
+        run: pip install bandit[toml]
+
+      - name: Run Bandit
+        run: bandit -r services/wg-manager -x ./venv,.venv -ll
+        continue-on-error: true
+
+  trivy:
+    name: Trivy (Dockerfile & FS)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '0'
+          ignore-unfixed: true
+        continue-on-error: true
+
+      - name: Trivy — Dockerfile
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'config'
+          scan-ref: 'services/wg-manager/Dockerfile'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '0'
+        continue-on-error: true

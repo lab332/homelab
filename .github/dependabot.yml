@@ -1,0 +1,39 @@
+# Dependabot: автоматические PR с обновлениями зависимостей и проверкой уязвимостей
+# https://docs.github.com/en/code-security/dependabot
+
+version: 2
+updates:
+  # Python — WG Manager и Ansible (локальная разработка)
+  - package-ecosystem: "pip"
+    directory: "/services/wg-manager"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels: ["dependencies", "security"]
+
+  - package-ecosystem: "pip"
+    directory: "/ansible"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels: ["dependencies", "security"]
+
+  # Docker — образ WG Manager
+  - package-ecosystem: "docker"
+    directory: "/services/wg-manager"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 3
+    labels: ["dependencies", "docker", "security"]
+
+  # GitHub Actions (если появятся воркфлоу)
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 3
+    labels: ["dependencies", "github-actions"]
