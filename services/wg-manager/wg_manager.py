@@ -1,12 +1,13 @@
 import subprocess
 import os
 import sqlite3
+import tempfile
 import time
 import logging
 from datetime import datetime, timedelta
 from pathlib import Path
 from dataclasses import dataclass
-from typing import Optional, Tuple, List, Union
+from typing import Optional, Tuple, List
 import paramiko
 
 from config import settings
@@ -22,28 +23,20 @@ class CommandResult:
 
 
 def run_local_command(
-    command: Union[str, List[str]],
+    command: List[str],
     *,
     input_text: Optional[str] = None,
 ) -> CommandResult:
+    """Run a local command. Args as list to avoid shell injection."""
     try:
-        if isinstance(command, list):
-            result = subprocess.run(
-                command,
-                shell=False,
-                capture_output=True,
-                text=True,
-                timeout=30,
-                input=input_text,
-            )
-        else:
-            result = subprocess.run(
-                command,
-                shell=True,
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
+        result = subprocess.run(
+            command,
+            shell=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            input=input_text,
+        )
         return CommandResult(
             success=result.returncode == 0,
             output=(result.stdout or "").strip(),
@@ -53,6 +46,22 @@ def run_local_command(
         return CommandResult(success=False, output="", error="Command timed out")
     except Exception as e:
         return CommandResult(success=False, output="", error=str(e))
+
+
+def _run_wg_syncconf() -> CommandResult:
+    """Apply running WireGuard config from disk (no shell, no user input)."""
+    strip_result = run_local_command(["wg-quick", "strip", settings.wg_interface])
+    if not strip_result.success:
+        return strip_result
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".conf", delete=False
+    ) as f:
+        f.write(strip_result.output)
+        temp_path = f.name
+    try:
+        return run_local_command(["wg", "syncconf", settings.wg_interface, temp_path])
+    finally:
+        os.unlink(temp_path)
 
 
 def run_remote_command(command: str) -> CommandResult:
@@ -87,8 +96,10 @@ def run_remote_command(command: str) -> CommandResult:
 
 def restart_internal() -> CommandResult:
     snapshot_traffic()
-    cmd = f"wg-quick down {settings.wg_interface} ; wg-quick up {settings.wg_interface}"
-    return run_local_command(cmd)
+    down_result = run_local_command(["wg-quick", "down", settings.wg_interface])
+    if not down_result.success:
+        return down_result
+    return run_local_command(["wg-quick", "up", settings.wg_interface])
 
 
 def restart_external() -> CommandResult:
@@ -201,8 +212,8 @@ AllowedIPs = {client_ip}/32
         input_text=client_config,
     )
 
-    run_local_command(f"bash -c 'wg syncconf {settings.wg_interface} <(wg-quick strip {settings.wg_interface})'")
-    
+    _run_wg_syncconf()
+
     return {
         "username": username,
         "ip": client_ip,
@@ -621,18 +632,12 @@ def disable_peer(public_key: str) -> CommandResult:
 
 def enable_peer(public_key: str) -> CommandResult:
     """Re-add all configured peers (restores a previously disabled peer)."""
-    return run_local_command(
-        f"bash -c 'wg syncconf {settings.wg_interface} "
-        f"<(wg-quick strip {settings.wg_interface})'"
-    )
+    return _run_wg_syncconf()
 
 
 def enable_all_peers() -> CommandResult:
     """Re-add all configured peers -- used for monthly reset."""
-    return run_local_command(
-        f"bash -c 'wg syncconf {settings.wg_interface} "
-        f"<(wg-quick strip {settings.wg_interface})'"
-    )
+    return _run_wg_syncconf()
 
 
 def is_peer_blocked(username: str) -> bool:
@@ -737,8 +742,8 @@ def delete_user(username: str) -> dict:
 
     shutil.rmtree(client_dir)
 
-    run_local_command(f"bash -c 'wg syncconf {settings.wg_interface} <(wg-quick strip {settings.wg_interface})'")
-    
+    _run_wg_syncconf()
+
     return {
         "username": username,
         "deleted": True
