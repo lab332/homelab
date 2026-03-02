@@ -96,9 +96,9 @@ def run_remote_command(command: str) -> CommandResult:
 
 def restart_internal() -> CommandResult:
     snapshot_traffic()
-    down_result = run_local_command(["wg-quick", "down", settings.wg_interface])
-    if not down_result.success:
-        return down_result
+    # Run down first; ignore failure (interface may already be down)
+    run_local_command(["wg-quick", "down", settings.wg_interface])
+    # Up defines success (same as original "down ; up" semantics)
     return run_local_command(["wg-quick", "up", settings.wg_interface])
 
 
