@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     telegram_chat_id: int = 0  # Allowed chat/group ID (negative for groups)
     telegram_webhook_url: str = ""  # Webhook URL (e.g., https://bot.example.com/telegram_webhook)
     telegram_webhook_path: str = "/telegram_webhook"  # Path for webhook endpoint
+    telegram_proxy_url: str = ""  # HTTP/SOCKS proxy for api.telegram.org (e.g. http://10.20.30.2:3128)
     
     # WireGuard
     wg_interface: str = "wg0"

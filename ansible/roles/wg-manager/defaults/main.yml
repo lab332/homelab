@@ -18,6 +18,9 @@ wg_manager_telegram_chat_id: 0  # Chat/Group ID (negative number for groups)
 wg_manager_telegram_webhook_url: ""  # e.g., https://bot.lab332.ru
 wg_manager_telegram_webhook_path: "/telegram_webhook"
 
+# HTTP/SOCKS proxy for api.telegram.org (e.g. http://10.20.30.2:3128 on vpn-external)
+wg_manager_telegram_proxy_url: ""
+
 # WireGuard settings
 wg_manager_wg_interface: "wg0"
 wg_manager_wg_config_path: "/etc/wireguard"

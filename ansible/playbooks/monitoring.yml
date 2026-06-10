@@ -90,6 +90,7 @@
             message_thread_id: "{{ wg_manager_telegram_alerts_thread_id }}"
             api_url: "https://api.telegram.org"
             parse_mode: "HTML"
+            http_config: "{{ {'proxy_url': wg_manager_telegram_proxy_url} if (wg_manager_telegram_proxy_url | default('')) else {} }}"
             message: !unsafe |
               {{ if eq .Status "firing" }}🔥{{ else }}✅{{ end }} <b>{{ .Status | toUpper }}</b>
               {{ range .Alerts }}

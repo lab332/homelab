@@ -28,6 +28,16 @@ application: Application = None
 AUTO_DELETE_TIMEOUT = 3600
 
 
+def build_application() -> Application:
+    builder = Application.builder().token(settings.telegram_bot_token)
+    if settings.telegram_proxy_url:
+        builder = builder.proxy(settings.telegram_proxy_url).get_updates_proxy(
+            settings.telegram_proxy_url
+        )
+        logger.info("Telegram API proxy enabled: %s", settings.telegram_proxy_url)
+    return builder.build()
+
+
 async def auto_delete_message(message, delay: int = AUTO_DELETE_TIMEOUT):
     try:
         await asyncio.sleep(delay)
@@ -629,7 +639,7 @@ async def start_bot():
         logger.info("Webhook URL configured, bot will run in webhook mode")
         return
     
-    application = Application.builder().token(settings.telegram_bot_token).build()
+    application = build_application()
     setup_handlers(application)
     schedule_jobs(application)
 
@@ -650,7 +660,7 @@ async def start_bot_webhook() -> Application:
         logger.warning("Telegram bot token not configured, bot disabled")
         return None
     
-    application = Application.builder().token(settings.telegram_bot_token).build()
+    application = build_application()
     setup_handlers(application)
     schedule_jobs(application)
     

@@ -60,3 +60,6 @@ all:
     # Требует SSL сертификат (nginx_ssl_*)
     # wg_manager_telegram_webhook_url: "https://yourdomain.com"
     # wg_manager_telegram_webhook_path: "/telegram_webhook"
+
+    # Прокси для api.telegram.org (поднять на vpn-external, доступен по WG IP)
+    # wg_manager_telegram_proxy_url: "http://10.20.30.2:3128"
